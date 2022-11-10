@@ -17,7 +17,8 @@ class NLSM_model(spin_model.Spin_Model):
             gen_prob: Optional[int] = None,
             gen_sigma: Optional[float] = None,
             metal_distance: float = 1.,
-            electric_constant: float = np.inf
+            electric_constant: float = np.inf,
+            num_bzone: int = 1,
             device=device):
         super().__init__(batch_size=batch_size,
             gen_sigma=gen_sigma, gen_prob=gen_prob, device=device)
@@ -27,6 +28,7 @@ class NLSM_model(spin_model.Spin_Model):
         self.boundary = boundary.lower()
         self.metal_distance = metal_distance
         self.electric_constant = electric_constant
+        self.num_bzone = num_bzone
         assert self.boundary in ["open", "circular"]
 
     def initialize(self, n: Optional[torch.Tensor] = None):
@@ -205,18 +207,22 @@ class NLSM_model(spin_model.Spin_Model):
         density_fourier = torch.rfft2(density, axis=(-2, -1))
         l = self.l
         half_l = l // 2
+        bzone_coord = torch.arange(-self.num_bzone, self.num_bzone+1) * (2*np.pi)
         reciprocal_coord_x = torch.arange(half_l, l + half_l).remainder(l) - half_l
         reciprocal_coord_x *= 2 * np.pi / l
+        reciprocal_coord_x = reciprocal_coord_x[:, None] + bzone
+        reciprocal_coord_x = reciprocal_coord_x[:, None, :, None]
         reciprocal_coord_y = torch.arange(0, half_l + 1)
         reciprocal_coord_y *= 2 * np.pi / l
-        reciprocal_coords = torch.meshgrid(reciprocal_coord_x, reciprocal_coord_y)
-        reciprocal_distances = torch.sqrt(reciprocal_coords[0]**2 + reciprocal_coords[1]**2)
+        reciprocal_coord_y = reciprocal_coord_y[:, None] + bzone
+        reciprocal_coord_y = reciprocal_coord_y[None, :, None, :]
+        reciprocal_distances = torch.sqrt(reciprocal_coord_x**2 + reciprocal_coord_y**2)
         potential_kernel = \
             torch.tanh(reciprocal_distances * self.metal_distance / 2.) \
-            / reciprocal_distances / (2. * self.electric_constant)
+            / reciprocal_distances / (2. * self.electric_constant) \
+            * torch.exp(-0.5 * (reciprocal_distances * self.moire_length) ** 2)
+        potential_kernel = potential_kernel.sum(axis=(-2, -1))
         potential_fourier = potential_kernel * density_fourier
-        potential_fourier *= \
-            torch.exp(-0.5 * (reciprocal_distances * self.moire_length) ** 2)
         potential = torch.irfft2(potential_fourier, density.shape[-2:])
         return potential
 
