@@ -17,8 +17,9 @@ class NLSM_model(spin_model.Spin_Model):
             gen_prob: Optional[int] = None,
             gen_sigma: Optional[float] = None,
             metal_distance: float = 1.,
+            moire_length: float = 10.,
             electric_constant: float = np.inf,
-            num_bzone: int = 1,
+            num_bzone: int = 0,
             device=device):
         super().__init__(batch_size=batch_size,
             gen_sigma=gen_sigma, gen_prob=gen_prob, device=device)
@@ -27,6 +28,7 @@ class NLSM_model(spin_model.Spin_Model):
         self.inter = torch.tensor(inter_layer_interaction, device=device, dtype=torch.double)
         self.boundary = boundary.lower()
         self.metal_distance = metal_distance
+        self.moire_length = moire_length
         self.electric_constant = electric_constant
         self.num_bzone = num_bzone
         assert self.boundary in ["open", "circular"]
@@ -173,6 +175,7 @@ class NLSM_model(spin_model.Spin_Model):
         return hamiltonian
 
     def _skyrmion_density(self):
+        n = self.n
         if self.boundary == "open":
             n_shape = n.shape
             l = n_shape[-2]
@@ -182,15 +185,15 @@ class NLSM_model(spin_model.Spin_Model):
             density = density.reshape(n_shape[:-1]) / (4 * np.pi)
         elif self.boundary == "circular":
             n_x, n_y = n.roll(-1, -3), n.roll(-1, -2)
-            density_1 = torch.sum(n * torch.cross(nx, ny, axis=-1), axis=-1)
-            density_1 /= 1. + torch.sum(n, n_x, axis=-1) \
-                + torch.sum(n_x, n_y, axis=-1) \
-                + torch.sum(n_y, n, axis=-1)
+            density_1 = torch.sum(n * torch.cross(n_x, n_y, axis=-1), axis=-1)
+            density_1 /= 1. + torch.sum(n * n_x, axis=-1) \
+                + torch.sum(n_x * n_y, axis=-1) \
+                + torch.sum(n_y * n, axis=-1)
             n_x, n_y = n.roll(1, -3), n.roll(1, -2)
-            density_2 = torch.sum(n * torch.cross(nx, ny, axis=-1), axis=-1)
-            density_2 /= 1. + torch.sum(n, n_x, axis=-1) \
-                + torch.sum(n_x, n_y, axis=-1) \
-                + torch.sum(n_y, n, axis=-1)
+            density_2 = torch.sum(n * torch.cross(n_x, n_y, axis=-1), axis=-1)
+            density_2 /= 1. + torch.sum(n * n_x, axis=-1) \
+                + torch.sum(n_x * n_y, axis=-1) \
+                + torch.sum(n_y * n, axis=-1)
             density = (density_1.arctan() + density_2.arctan()) / (2 * np.pi)
         density[..., 1, :, :] = -density[..., 1, :, :]
         return density
@@ -204,17 +207,21 @@ class NLSM_model(spin_model.Spin_Model):
     def _electric_potential(self, *, density=None):
         if density is None:
             density = self._skyrmion_density().sum(axis=-3)
-        density_fourier = torch.rfft2(density, axis=(-2, -1))
+        density_fourier = torch.fft.rfft2(density, axis=(-2, -1))
         l = self.l
         half_l = l // 2
-        bzone_coord = torch.arange(-self.num_bzone, self.num_bzone+1) * (2*np.pi)
-        reciprocal_coord_x = torch.arange(half_l, l + half_l).remainder(l) - half_l
+        bzone_coord = torch.arange(-self.num_bzone, self.num_bzone+1,
+            dtype=torch.double, device=self.device) * (2 * np.pi)
+        reciprocal_coord_x = torch.arange(half_l, l + half_l,
+            dtype=torch.double, device=self.device)
+        reciprocal_coord_x = reciprocal_coord_x.remainder(l) - half_l
         reciprocal_coord_x *= 2 * np.pi / l
-        reciprocal_coord_x = reciprocal_coord_x[:, None] + bzone
+        reciprocal_coord_x = reciprocal_coord_x[:, None] + bzone_coord
         reciprocal_coord_x = reciprocal_coord_x[:, None, :, None]
-        reciprocal_coord_y = torch.arange(0, half_l + 1)
+        reciprocal_coord_y = torch.arange(0, half_l + 1,
+            dtype=torch.double, device=self.device)
         reciprocal_coord_y *= 2 * np.pi / l
-        reciprocal_coord_y = reciprocal_coord_y[:, None] + bzone
+        reciprocal_coord_y = reciprocal_coord_y[:, None] + bzone_coord
         reciprocal_coord_y = reciprocal_coord_y[None, :, None, :]
         reciprocal_distances = torch.sqrt(reciprocal_coord_x**2 + reciprocal_coord_y**2)
         potential_kernel = \
@@ -223,7 +230,7 @@ class NLSM_model(spin_model.Spin_Model):
             * torch.exp(-0.5 * (reciprocal_distances * self.moire_length) ** 2)
         potential_kernel = potential_kernel.sum(axis=(-2, -1))
         potential_fourier = potential_kernel * density_fourier
-        potential = torch.irfft2(potential_fourier, density.shape[-2:])
+        potential = torch.fft.irfft2(potential_fourier, density.shape[-2:])
         return potential
 
     def electric_potential(self):

@@ -84,6 +84,10 @@ def test_micro_canonical_calibration(data_name):
     save_fig = True
     """ Test neighbor generation hamiltonian distribution """
     num_gen = 1000
+    """ Number of bzones used in electrostatic potential integration """
+    num_bzone = 1
+    """ Electric constant """
+    ec = 1.
 
     """ All average energy """
     avg_energy = np.zeros_like(temperatures)
@@ -113,6 +117,8 @@ def test_micro_canonical_calibration(data_name):
             l=l,
             interaction_j=interaction_j,
             batch_size=num_system,
+            electric_constant=ec,
+            num_bzone=num_bzone,
             device=device,
             boundary="circular"
         )
@@ -188,11 +194,11 @@ def micro_canonical_calibration(data_name):
     truncate_steps = 80000
     micro_ens_steps = 10000000 + truncate_steps
     """ Size of the grid """
-    l = 16
+    l = 128
     """ Interaction strength principle components """
-    interaction_j = np.ones(3)
+    inter_layer_interaction = np.ones(3)
     """ Number of systems """
-    num_system = 8
+    num_system = 16
     """ Temperature and thermodynamic beta """
     # temperatures = np.logspace(-1, 1, 5)
     temperatures = np.array([0.1, 10.])
@@ -206,10 +212,27 @@ def micro_canonical_calibration(data_name):
     save_fig = True
     """ Test neighbor generation hamiltonian distribution """
     num_gen = 0
+    """ Number of bzones used in electrostatic potential integration """
+    num_bzone = 1
+    """ Electric constant """
+    ec = 1.
+    """ Metal distance """
+    metal_distance = 1.
+    """ Moire length """
+    moire_length = 10.
+    """ Test """
+    if_test = True
 
     """ All average energy """
     avg_energy = np.zeros_like(temperatures)
     n_samples = []
+
+    if if_test:
+        grad_steps = grad_steps // 100
+        truncate_steps = truncate_steps // 100
+        micro_ens_steps = micro_ens_steps // 100
+        l = l // 16
+        num_system = num_system // 4
 
     """ Return dict keys """
     omit_keys = set(locals().keys())
@@ -233,10 +256,14 @@ def micro_canonical_calibration(data_name):
         print("Neighbor generation sigma", gen_sigma)
         model = nlsm_model.NLSM_model(
             l=l,
-            interaction_j=interaction_j,
+            inter_layer_interaction=inter_layer_interaction,
             batch_size=num_system,
             gen_prob=gen_prob,
             gen_sigma=gen_sigma,
+            num_bzone=num_bzone,
+            electric_constant=ec,
+            moire_length=moire_length,
+            metal_distance=metal_distance,
             device=device,
             boundary="circular"
         )
@@ -483,6 +510,6 @@ if __name__ == "__main__":
     # animation = load_and_simulate("skyrmion")
     # data_name = "data_0612"
     # data = micro_canonical_calibration(data_name)
-    data_name = "nlsm_long"
+    data_name = "nlsm_electrostatic"
     data = micro_canonical_calibration(data_name)
     nlsm_utils.dump_data(data, os.path.join("Data", data_name))
