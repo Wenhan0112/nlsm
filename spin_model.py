@@ -11,13 +11,12 @@ def uniform_sphere(d: int, size=1, device=device) -> torch.Tensor:
     """
     Uniformly generate points on a unit sphere.
     @params d (int): The dimension of the sphere.
-        Constraints: d >= 1
+        CONSTRAINT: d >= 1
     @params size (int or sequence of ints): The shape of the samples.
-        The output array shape is np.append(size, d)
+        The output array shape is np.append(size, d). 
     @return (torch.Tensor): The samples from the uniform sphere.
-        Constraint: RETURN.shape = size + (3,)
+        CONSTRAINT: RETURN.shape = size + (3,)
     """
-
     if size == 1:
         size = (d,)
     else:
@@ -33,16 +32,40 @@ def uniform_sphere(d: int, size=1, device=device) -> torch.Tensor:
 #     return torch.nn.functional.normalize(n, dim=-1)
 
 class Spin_Model(physics_model.Physics_Model):
+    """
+    A physics model of a spin field, i.e. a collections of vectors on 
+    3-dimensional unit sphere. 
+
+    The spin model provides a neighbor generation model, used for 
+    Metropolis algorthm.
+    
+    """
     def __init__(self,
-            batch_size: Optional[int] = None,
+            batch_size: int = 1,
             gen_prob: Optional[float] = None,
             gen_sigma: Optional[float] = None,
-            device=device):
+            device: torch.device = device):
+        """
+        Constructor.
+        @params batch_size (int): Number of states created.
+            CONSTRAINT: batch_size > 0
+        @params gen_prob (Optional[float], DEFAULT None): The new spin 
+            generation probability in the neighbor generation model. 
+            CONSTRAINT: gen_prob > 0
+        @params gen_sigma (Optional[float], DEFAULT None): The mean offset in 
+            the neighbor generation algorithm in the neighbor generation 
+            model. 
+            CONSTRAINT: gen_sigma > 0
+        @params device (torch.device): The device where the states are stored. 
+        """
         super().__init__(batch_size=batch_size, device=device)
         self.gen_sigma = gen_sigma
         self.gen_prob = gen_prob
 
     def neighbor_gen_activated(self):
+        """
+        OVERRIDE
+        """
         return (self.gen_sigma is not None) and (self.gen_prob is not None)
 
     def neighbor_generation(self) -> torch.Tensor:

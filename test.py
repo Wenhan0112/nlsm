@@ -5,6 +5,7 @@ import nlsm_model
 import time
 import torchgeometry
 import physical_fn as pypf
+import utils
 
 cpu = torch.device("cpu")
 device = torch.device("cuda") if torch.cuda.is_available() else cpu
@@ -73,8 +74,8 @@ def test_hamiltonian():
         inter_layer_interaction = torch.ones(3)
 
         n = torch.zeros((1, 2, num_sample, num_sample, 3))
-        n[:, 1, :, :, 2] = 1
-        skyrmion_radius = 0.6
+        n[:, 1, :, :, 2] = -1
+        skyrmion_radius = 0.8
         pos = torch.arange(0, grid_size, grid_size / num_sample)
         disp_to_center = pos - grid_size / 2
         dist_to_center = torch.sqrt(disp_to_center[:, None]**2 + disp_to_center[None, :]**2)
@@ -257,11 +258,175 @@ def test_tanhc_var1():
     plt.xscale("log")
     plt.show()
 
+def test_grad():
+    grid_sizes = [32]
+    # num_samples = torch.logspace(7, 12, 12-7+1, base=2, dtype=int)
+    # grid_sizes = torch.logspace(3,5,5-3+1,base=2, dtype=int)
+    d = 3
+    h=[]
+    # num_bzones = torch.arange(2, 8, 2)
+    # print(num_samples)
+    for grid_size in grid_sizes:
+        # print(num_sample.item())
+        num_sample = 1024
+        # grid_size = 16
+        num_bzone=2
+        intra_layer_interaction = 1
+        inter_layer_interaction = torch.ones(3)
+
+        n = torch.zeros((1, 2, num_sample, num_sample, 3))
+        n[:, 1, :, :, 2] = -1
+        skyrmion_radius = 0.8
+        pos = torch.arange(0, grid_size, grid_size / num_sample)
+        disp_to_center = pos - grid_size / 2
+        dist_to_center = torch.sqrt(disp_to_center[:, None]**2 + disp_to_center[None, :]**2)
+        theta = 2*torch.arcsin(torch.exp(-dist_to_center / (2*skyrmion_radius)))
+        phi = torch.atan2(disp_to_center[None, :], disp_to_center[:, None])
+        n[:, 0, :, :, 0] = torch.sin(theta) * torch.cos(phi)
+        n[:, 0, :, :, 1] = torch.sin(theta) * torch.sin(phi)
+        n[:, 0, :, :, 2] = torch.cos(theta)
+        # n = torch.nn.functional.normalize(n, dim=-1)
+
+        model = nlsm_model.NLSM_model(
+            grid_size = grid_size,
+            num_sample = num_sample,
+            inter_layer_interaction=inter_layer_interaction,
+            intra_layer_interaction=intra_layer_interaction,
+            batch_size=1,
+            metal_distance=d,
+            num_bzone=num_bzone,
+            gpu_memory=0
+        )
+        model.initialize(n)
+        h, grad = model.hamiltonian(compute_grad=True, n=n)
+        grad = grad[0]
+        # print(model.n[0].flip(dims=[0]))
+        theo_grad = (model.mesh_area / 2 / np.pi**2) * (model.n[0] + model.n[0].flip(dims=[0])) * model.inter
+        theo_grad = theo_grad.float()
+        curr = torch.empty((1, num_sample, num_sample, 2))
+        # curr[:, 0] = 
+
+        # print(grad.dtype, theo_grad.dtype)
+        print("Success:", torch.allclose(theo_grad[0], grad[0]))
+        # print((grad[0]).abs().max())
+        # print((theo_grad[0] / grad[0])[300,300])
+        # print(theo_grad[0,300,300], grad[0,300,300])
+        # plt.matshow(theo_grad[0] / grad[0])
+        # plt.show()
+        # print(theo_grad.shape, grad.shape)
+        # print(grad, theo_grad)
+
+def test_grad_algorithm():
+    def hamiltonian(compute_grad=False, n=None):
+        if compute_grad:
+            n.requires_grad_(True)
+        hamiltonian = torch.sum((n[:, 0, :, :, :] +n[:, 1, :, :, :])**2, dim=(-1,-2,-3))
+        if compute_grad:
+            loss = hamiltonian.sum()
+            loss.backward()
+            hamiltonian.detach_()
+            hamiltonian.requires_grad_(False)
+            n.requires_grad_(False)
+            return hamiltonian, n.grad
+        else:
+            return hamiltonian
+    
+    # n = torch.arange(2*10*10*3).reshape((1,2,10,10,3)).float()
+    n = torch.arange(600).reshape((1,2,10,10,3)).float()
+    n = torch.nn.functional.normalize(n, dim=-1)
+    print(n.shape, n.dtype)
+    h, grad = hamiltonian(True, n)
+    print(h, grad.shape)
+    # flip_n = torch.empty_like(n)
+    # flip_n[:, 0] = n[:, 1]
+    # flip_n[:, 1] = n[:, 0]
+    # print(grad)
+    # print("flip:", torch.allclose(n.flip(1), flip_n))
+    print("Success:", torch.allclose(grad, 2*n+2*n.flip(1)))
+    
+
+def test_hamiltonian_speed():
+    num_samples = torch.logspace(7, 11, 9, base=2, dtype=int)
+    # grid_sizes = torch.logspace(3,5,5-3+1,base=2, dtype=int)
+    d = 3
+    time_no_grad = []
+    time_grad = []
+    num_bzone=2
+    intra_layer_interaction = 1
+    inter_layer_interaction = torch.ones(3)
+    # num_bzones = torch.arange(2, 8, 2)
+    # print(num_samples)
+    grid_size = 32
+    for num_sample in num_samples:
+
+        model = nlsm_model.NLSM_model(
+            grid_size = grid_size,
+            num_sample = num_sample,
+            inter_layer_interaction=inter_layer_interaction,
+            intra_layer_interaction=intra_layer_interaction,
+            batch_size=1,
+            metal_distance=d,
+            num_bzone=num_bzone,
+            gpu_memory=0
+        )
+        model.initialize()
+        # density = model.skyrmion_density()
+        # plt.imshow(density[0,0])
+        # plt.show()
+        # plt.imshow(density[0,1])
+        # plt.show()
+        start = time.time_ns()
+        model.hamiltonian()
+        end = time.time_ns()
+        time_no_grad.append(end-start)
+        start = time.time_ns()
+        model.hamiltonian(compute_grad=True)
+        end = time.time_ns()
+        time_grad.append(end-start)
+    print(time_no_grad)
+    print(time_grad)
+
+    # regressor = utils.WeightedLinearRegressor()
+    time_no_grad = np.array(time_no_grad)
+    time_grad = np.array(time_grad)
+    # regressor.fit(np.log(time_no_grad), None, np.log(time_grad), None)
+    # regressor.fit(time_no_grad, None, time_grad, None)
+    # slope = regressor.get_slope()
+    # intercept = regressor.get_intercept()
+    # print("Slope", slope)
+    # print("Intercept", intercept)
+    # time_pred = np.exp(slope * np.log(time_no_grad) + intercept)
+    # time_pred = slope * time_no_grad + intercept
+    time_ratio = time_grad / time_no_grad
+    time_ratio_avg = np.average(time_ratio, weights=num_samples.numpy())
+
+    plt.plot(num_samples, time_ratio, "b.", label="Experiment")
+    # plt.plot(time_no_grad, time_pred, "r-", label="Regression")
+    plt.axhline(time_ratio_avg, color="r", label=f"Average ratio {time_ratio_avg:.3f}")
+    plt.plot()
+    plt.xscale("log")
+    # plt.yscale("log")
+    plt.tick_params(direction="in")
+    plt.xlabel("Grid size")
+    plt.ylabel("Time ratio")
+    plt.ylim(bottom=0)
+    plt.legend()
+    plt.show()
+    
+
+def test_regressor():
+    a = np.arange(10)
+    regressor = utils.WeightedLinearRegressor(biased=True)
+    regressor.fit(a, None, 2 * a +2 + np.random.randn(10)*0.5, None)
+    slope = regressor.get_slope()
+    print("Slope", slope)
+
 if __name__ == "__main__":
     # test_neighbor_generation_1()
     # test_neighbor_generation_2()
+
     # test_plot()
-    test_hamiltonian()
+    # test_hamiltonian()
     # test_solid_angle()
     # test_speed()
     # test_grad()
@@ -272,3 +437,7 @@ if __name__ == "__main__":
     # test_grad2()
     # test_evolution_convergence()
     # test_tanhc_var1()
+    # test_grad()
+    # test_grad_algorithm()
+    test_hamiltonian_speed()
+    # test_regressor()

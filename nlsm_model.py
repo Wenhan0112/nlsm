@@ -71,11 +71,12 @@ class NLSM_model(spin_model.Spin_Model):
         intra_hamiltonian = torch.sum(x_grad ** 2, dim=(-4,-3,-2,-1)) \
             + torch.sum(y_grad ** 2, dim=(-4,-3,-2,-1))
         intra_hamiltonian *= self.intra
-        inter_hamiltonian = torch.sum(self.inter * (n[..., 0, :, :, :] - n[..., 1, :, :, :])**2,
+        inter_hamiltonian = torch.sum(self.inter * (n[..., 0, :, :, :] + n[..., 1, :, :, :])**2,
             dim=(-3,-2,-1)) * (self.mesh_area / 4 / np.pi**2)
         ee = self.electrostatic_energy(n=n)
-        print(intra_hamiltonian.item(), inter_hamiltonian.item(), ee.item())
+        # print(intra_hamiltonian.item(), inter_hamiltonian.item(), ee.item())
         hamiltonian = intra_hamiltonian + inter_hamiltonian + ee
+        # hamiltonian = inter_hamiltonian
         if compute_grad:
             loss = hamiltonian.sum()
             loss.backward()
@@ -165,8 +166,7 @@ class NLSM_model(spin_model.Spin_Model):
             + torch.sum(n_x * n_y, axis=-1) \
             + torch.sum(n_y * n, axis=-1)
         density = (density_1.arctan() + density_2.arctan()) / (2 * np.pi * self.mesh_area) 
-        density[..., 1, :, :] = -density[..., 1, :, :]
-        return density
+        return density[..., 0, :, :] - density[..., 1, :, :]
 
     def current_density(self, grad=None, n=None):
         if n is None:
@@ -175,11 +175,9 @@ class NLSM_model(spin_model.Spin_Model):
             _, grad = self.hamiltonian(n=n)
         curr_d = torch.zeros(n.shape[:-4] + (self.l, self.l, 2), device=self.device)
         nd = n.roll(-1, -3) - n
-        j = torch.sum(nd * grad, axis=-1)
-        curr_d[..., 0] = j[..., 1, :, :] - j[..., 0, :, :]
+        curr_d[..., 0] = -torch.sum(nd * grad, axis=(-1, -4))
         nd = n.roll(-1, -2) - n
-        j = torch.sum(nd * grad, axis=-1)
-        curr_d[..., 1] = j[..., 0, :, :] - j[..., 1, :, :]
+        curr_d[..., 1] = torch.sum(nd * grad, axis=(-1, -4))
         return curr_d
 
         
@@ -205,7 +203,7 @@ class NLSM_model(spin_model.Spin_Model):
             self.potential_kernel = pypf.tanhc_var1(recip_dist, self.metal_distance)
             self.potential_kernel *= torch.exp(-recip_dist2/2)
             self.potential_kernel = self.potential_kernel.sum(axis=(0,1)) 
-        self.potential_kernel *= self.mesh_area**2 / (4*np.pi*self.grid_size**2)
+        self.potential_kernel *= np.pi * self.mesh_area**2 / self.grid_size**2
 
         # print(self.potential_kernel)
 
@@ -213,7 +211,7 @@ class NLSM_model(spin_model.Spin_Model):
     def electrostatic_energy(self, n=None):
         if n is None:
             n = self.n
-        density = self.skyrmion_density(n=n).sum(axis=-3)
+        density = self.skyrmion_density(n=n)
         density_dft = torch.fft.fft2(density)
         energy = density_dft.abs()**2 * self.potential_kernel
         energy = energy.sum(axis=(-2, -1))

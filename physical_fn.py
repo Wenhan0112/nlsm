@@ -24,10 +24,11 @@ def angle_axis_to_rot_mat(x: torch.tensor) -> torch.tensor:
     representation batchly. 
     @params x (torch.tensor): Input tensor.
         Constriant: x.ndim >= 1 and x.shape[-1] == 3
-        x[..., i, :]: The axis angle representation of rotation I.
+        x[..., i, j]: The axis angle representation index J of rotation I.
     @return (torch.tensor): Output rotation matrix representation.
-        Constraint: RETURN.shape = x.shape + (3,)
-        RETURN[..., i, 3, 3]: The rotation matrix representation of rotation I. 
+        Constraint: RETURN.shape == x.shape + (3,)
+        RETURN[..., i, j, k]: The rotation matrix representation index (J, K) 
+            of rotation I. 
     """
     assert x.ndim >= 1 and x.shape[-1] == 3, \
         f"Incompatible input shape: {x.shape}"
