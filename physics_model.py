@@ -85,9 +85,14 @@ class Physics_Model():
             self.n[not_accepted] = old_n[not_accepted]
             # if not_accepted.to(dtype=torch.float64).mean() < 1:
             #     last_accepted = self.n
-            # hamiltonian[:, i+1] = torch.where(not_accepted,
-            #     hamiltonian[:, i], next_hamiltonian)
-            hamiltonian[:, i+1] = self.hamiltonian()
+            # print(not_accepted, hamiltonian[:, i], next_hamiltonian)
+            # print(torch.where(not_accepted,
+            #     hamiltonian[:, i], next_hamiltonian))
+            # print(self.hamiltonian())
+
+            hamiltonian[:, i+1] = torch.where(not_accepted,
+                hamiltonian[:, i], next_hamiltonian)
+            # hamiltonian[:, i+1] = self.hamiltonian()
             if callback:
                 callback(self, i)
             # all_ns[:, i+1] = self.n

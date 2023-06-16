@@ -1,17 +1,21 @@
 import torch
 import numpy as np
-import matplotlib
+import matplotlib.animation
 import matplotlib.pyplot as plt
 import nlsm_model
 import nlsm_utils
 import tqdm
 import os
 import shutil
+import canonical_ens_sim
+import evolver as evolver_package
+import correlator
 
 cpu = torch.device("cpu")
 device = torch.device("cuda") if torch.cuda.is_available() else cpu
 if __name__ == "__main__":
     print(f"Currently using device: {device}")
+
 
 def load_and_simulate(target):
     data = nlsm_utils.load_data("part_data")
@@ -183,22 +187,29 @@ def load_and_simulate(target):
     return_data = nlsm_utils.export_data(locals(), omit_keys=omit_keys)
     return return_data
 
-def micro_canonical_calibration(data_name):
-    """ Time step """
-    delta_t = 1e-2
+def canonical_calibration(data_name):
+    """ Step size in time evolution """
+    dt = 1e-2
+    """ Number of steps in time evolution """
+    time_evolution_step = 100
     """ Number of steps """
     grad_steps = 0
-    truncate_steps = 80000
-    micro_ens_steps = 10000000 + truncate_steps
+    truncate_steps = 0
+    canonical_ens_step = 10000000 + truncate_steps
     """ Size of the grid """
-    l = 128
+    grid_size = 16
+    """ Number of samples in a grid in 1D. """
+    num_sample = 128
+    """ Intra-layer interaction strength """
+    intra_layer_interaction = 1
     """ Interaction strength principle components """
-    inter_layer_interaction = np.ones(3)
+    inter_layer_interaction = torch.ones(3)
     """ Number of systems """
-    num_system = 16
+    batch_size = 16
     """ Temperature and thermodynamic beta """
     # temperatures = np.logspace(-1, 1, 5)
     temperatures = np.array([0.1, 10.])
+    temperatures = temperatures[:1]
     betas = 1 / temperatures
     """ sigma = 0.05 """
     gen_sigmas = np.full_like(temperatures, 0.01)
@@ -207,16 +218,10 @@ def micro_canonical_calibration(data_name):
     gen_probs = np.full_like(gen_sigmas, 1/256.)
     """ True iff the figures are saved """
     save_fig = True
-    """ Test neighbor generation hamiltonian distribution """
-    num_gen = 0
     """ Number of bzones used in electrostatic potential integration """
-    num_bzone = 1
-    """ Electric constant """
-    ec = 1.
+    num_bzone = 2
     """ Metal distance """
-    metal_distance = 1.
-    """ Moire length """
-    moire_length = 10.
+    metal_distance = 3.
     """ Test """
     if_test = True
 
@@ -225,11 +230,18 @@ def micro_canonical_calibration(data_name):
     n_samples = []
 
     if if_test:
-        grad_steps = grad_steps // 100
-        truncate_steps = truncate_steps // 100
-        micro_ens_steps = micro_ens_steps // 100
-        l = l // 16
-        num_system = num_system // 4
+        grad_steps = grad_steps // 10000
+        truncate_steps = truncate_steps // 10000
+        canonical_ens_step = canonical_ens_step // 10000
+        time_evolution_step = time_evolution_step // 20
+        num_sample = num_sample // 16
+        batch_size = batch_size // 4
+
+    if True:
+        #demo
+        time_evolution_step = 1
+        batch_size = 1
+        canonical_ens_step *= 10
 
     """ Return dict keys """
     omit_keys = set(locals().keys())
@@ -256,64 +268,90 @@ def micro_canonical_calibration(data_name):
             num_sample,
             inter_layer_interaction=inter_layer_interaction,
             intra_layer_interaction=intra_layer_interaction,
-            metal_distance=3.,
-            num_bzone=2,
+            metal_distance=metal_distance,
+            num_bzone=num_bzone,
+            gen_prob=gen_prob,
+            gen_sigma=gen_sigma,
+            device=device,
+            batch_size=batch_size
+        )
+        # if grad_steps:
+        #     hamiltonian = model.gradient_descent(
+        #         delta_t, grad_steps,
+        #         show_bar=True
+        #     )
+        #     fig_name = os.path.join(f"{data_name}_imgs",
+        #         f"gd_{i:02d}.png") if save_fig else ""
+        #     nlsm_utils.plot_hamiltonian(
+        #         hamiltonian,
+        #         title=f"Gradient Descent (Temperature {temperature:.2f})",
+        #         save_fig=fig_name
+        #     )
+        # if num_gen:
+        #     original_h, new_h = model.test_generation_h_distribution(
+        #         num_gen, show_bar=True)
+        #     if not model.batched:
+        #         original_h, new_h = [original_h], [new_h]
+        #     for j in range(model.batch_size):
+        #         fig_name = os.path.join(f"{data_name}_imgs",
+        #             f"gen_h_dist_{i:02d}_model_{j:02d}.png") if save_fig else ""
+        #         nlsm_utils.plot_hist_hamiltonian(
+        #             new_h[j],
+        #             title=f"Neighbor Generation Distribution Model {j:02d} "
+        #             f"(Temperature {temperature:.2f})",
+        #             save_fig=fig_name,
+        #             vline=original_h[j].cpu().item()
+        #         )
+        canonical_ens_simulator = canonical_ens_sim.Canonical_Ensemble_Simulator(
+            model, beta, device=device
+        )
+        evolver = evolver_package.Midpoint_Evolver(model)
+        model.initialize()
+        canonical_ens_simulator.initialize()
+
+        hamiltonian = torch.empty((batch_size, canonical_ens_step, time_evolution_step))
+        curr_corr_shape = (batch_size, time_evolution_step, num_sample, num_sample, 2)
+        curr_correlator = correlator.Correlator(
+            curr_corr_shape,
+            ("N", "t", "r", "r", "n"),
             device=device
         )
-        model.initialize()
-        if grad_steps:
-            hamiltonian = model.gradient_descent(
-                delta_t, grad_steps,
-                show_bar=True
-            )
-            fig_name = os.path.join(f"{data_name}_imgs",
-                f"gd_{i:02d}.png") if save_fig else ""
-            nlsm_utils.plot_hamiltonian(
-                hamiltonian,
-                title=f"Gradient Descent (Temperature {temperature:.2f})",
-                save_fig=fig_name
-            )
-        if num_gen:
-            original_h, new_h = model.test_generation_h_distribution(
-                num_gen, show_bar=True)
-            if not model.batched:
-                original_h, new_h = [original_h], [new_h]
-            for j in range(model.batch_size):
-                fig_name = os.path.join(f"{data_name}_imgs",
-                    f"gen_h_dist_{i:02d}_model_{j:02d}.png") if save_fig else ""
-                nlsm_utils.plot_hist_hamiltonian(
-                    new_h[j],
-                    title=f"Neighbor Generation Distribution Model {j:02d} "
-                    f"(Temperature {temperature:.2f})",
-                    save_fig=fig_name,
-                    vline=original_h[j].cpu().item()
-                )
-        hamiltonian = model.micro_ens_sim(
-            beta,
-            micro_ens_steps,
-            show_bar=True
-        )
+
+        for i_ens in tqdm.trange(canonical_ens_step):
+            canonical_ens_simulator.step()
+            current_state = model.get_state().clone()
+            evolver.initialize()
+            # curr_density = torch.empty(curr_corr_shape)
+            for i_ev in range(time_evolution_step):
+                # curr_density[:, i_ev] = model.current_density()
+                hamiltonian[:, i_ens, i_ev] = model.hamiltonian()
+                # evolver.step(dt)
+            # curr_correlator.update_single(curr_density)
+            model.initialize(current_state)
+        
+        hamiltonian = hamiltonian.squeeze()
+
         fig_name = os.path.join(f"{data_name}_imgs",
             f"micro_ens_sim_{i:02d}.png") if save_fig else ""
         nlsm_utils.plot_hamiltonian(
             hamiltonian,
-            title="Microcanonical Ensemble Simulation "
+            title="Canonical Ensemble Simulation "
             f"(Temperature {temperature:.2f})",
             save_fig=fig_name
         )
-        if truncate_steps:
-            hamiltonian = hamiltonian[:, truncate_steps:]
-        fig_name = os.path.join(f"{data_name}_imgs",
-            f"micro_ens_sim_hist_{i:02d}.png") if save_fig else ""
-        nlsm_utils.plot_hist_hamiltonian(
-            hamiltonian,
-            title="Microcanoncial Ensemble Simulation "
-            f"(Temperature {temperature:.2f})",
-            save_fig=fig_name
-        )
+        # if truncate_steps:
+        #     hamiltonian = hamiltonian[:, truncate_steps:]
+        # fig_name = os.path.join(f"{data_name}_imgs",
+        #     f"micro_ens_sim_hist_{i:02d}.png") if save_fig else ""
+        # nlsm_utils.plot_hist_hamiltonian(
+        #     hamiltonian,
+        #     title="Microcanoncial Ensemble Simulation "
+        #     f"(Temperature {temperature:.2f})",
+        #     save_fig=fig_name
+        # )
         avg_energy[i] = hamiltonian.mean().cpu().numpy()
-        n = nlsm_utils.convert_array(model.get_n())
-        n_samples.append(n)
+        # n = nlsm_utils.convert_array(model.get_n())
+        # n_samples.append(n)
         # nlsm_utils.visualize_3d_color_state(n[0, 0])
         print()
     omit_keys = set(locals().keys()) - omit_keys
@@ -325,19 +363,20 @@ def micro_canonical_calibration(data_name):
 def evolution(data_name):
     """ Number of steps """
     steps = np.logspace(1, 3, 5, dtype=int)
-    print(steps)
+    step = steps[2]
     """ Time step """
-    delta_ts = 1 / steps.astype(float)
+    delta_ts = 5 / steps.astype(float)
+    delta_t = delta_ts[2]
     """ Size of the grid """
     grid_size = 16
     """ Total number of sample points """
-    num_sample = 512
+    num_sample = 128
     """ Interaction strength principle components """
     inter_layer_interaction = torch.ones(3)
     """ Intra layer interaction """
     intra_layer_interaction = 1
     """ Number of systems """
-    num_system = 4
+    num_system = 1
     """ True iff the figures are saved """
     save_fig = True
     """ Number of bzones used in electrostatic potential integration """
@@ -352,6 +391,20 @@ def evolution(data_name):
         num_sample //= 8
         num_system //= 4
 
+    if True:
+        # Use known system
+        n = torch.zeros((1, 2, num_sample, num_sample, 3))
+        n[:, 1, :, :, 2] = -1
+        skyrmion_radius = 0.8
+        pos = torch.arange(0, grid_size, grid_size / num_sample)
+        disp_to_center = pos - grid_size / 2
+        dist_to_center = torch.sqrt(disp_to_center[:, None]**2 + disp_to_center[None, :]**2)
+        theta = 2*torch.arcsin(torch.exp(-dist_to_center / (2*skyrmion_radius)))
+        phi = torch.atan2(disp_to_center[None, :], disp_to_center[:, None])
+        n[:, 0, :, :, 0] = torch.sin(theta) * torch.cos(phi)
+        n[:, 0, :, :, 1] = torch.sin(theta) * torch.sin(phi)
+        n[:, 0, :, :, 2] = torch.cos(theta)
+
     
 
     img_folder_name = f"{data_name}_imgs"
@@ -359,39 +412,42 @@ def evolution(data_name):
         shutil.rmtree(img_folder_name)
     os.makedirs(img_folder_name)
 
-    hamiltonians = []
+    hamiltonians = torch.empty((step, num_system))
+    ns = torch.empty((step,) + n.shape)
 
     """ Return dict keys """
     omit_keys = set(locals().keys())
 
-    for i in range(len(delta_ts)):
-        delta_t = delta_ts[i]
-        step = steps[i]
-        model = nlsm_model.NLSM_model(
-            grid_size=grid_size,
-            num_sample=num_sample,
-            inter_layer_interaction=inter_layer_interaction,
-            intra_layer_interaction=intra_layer_interaction,
-            batch_size=num_system,
-            metal_distance=3.,
-            num_bzone=2,
-            device=device
-        )
-        
-        model.initialize()
-        hamiltonian = model.evolution(
-            delta_t=delta_t,
-            steps = step,
-            show_bar=True
-        )
-        hamiltonians.append(hamiltonian)
-        # fig_name = os.path.join(f"{data_name}_imgs",
-        #     f"time_evolution.png") if save_fig else ""
-        # nlsm_utils.plot_hamiltonian(
-        #     hamiltonian,
-        #     title="Time evolution",
-        #     save_fig=fig_name
-        # )
+    # for i in range(len(delta_ts)):
+    
+    model = nlsm_model.NLSM_model(
+        grid_size=grid_size,
+        num_sample=num_sample,
+        inter_layer_interaction=inter_layer_interaction,
+        intra_layer_interaction=intra_layer_interaction,
+        batch_size=num_system,
+        metal_distance=metal_distance,
+        num_bzone=num_bzone,
+        device=device
+    )
+    
+    model.initialize(n)
+    evolver = evolver_package.Verlet_Evolver(model)
+    for j in tqdm.trange(step):
+        hamiltonians[j] = model.hamiltonian()
+        ns[j] = model.get_state()
+        evolver.step(delta_t)
+    fig_name = os.path.join(f"{data_name}_imgs",
+        f"time_evolution.png") if save_fig else ""
+    nlsm_utils.plot_hamiltonian(
+        hamiltonians[:, 0],
+        title="Time evolution",
+        save_fig=fig_name
+    )
+    print(ns[:, 0].shape)
+    animation = nlsm_utils.create_animation_state(
+        ns[:, 0], step=1, show_bar=True)
+    animation.save("evolution.gif")
 
     omit_keys = set(locals().keys()) - omit_keys
     return_data = nlsm_utils.export_data(locals(), omit_keys=omit_keys)
@@ -401,7 +457,8 @@ if __name__ == "__main__":
     # animation = load_and_simulate("skyrmion")
     # data_name = "data_0612"
     # data = micro_canonical_calibration(data_name)
+    # data_name = "enssim"
     data_name = "evolution"
-    # data = micro_canonical_calibration(data_name)
+    # data = canonical_calibration(data_name)
     data = evolution(data_name)
     # nlsm_utils.dump_data(data, os.path.join("Data", data_name))

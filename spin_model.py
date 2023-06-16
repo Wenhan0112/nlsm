@@ -50,7 +50,9 @@ class Spin_Model(physics_model.Physics_Model):
         @params batch_size (int): Number of states created.
             CONSTRAINT: batch_size > 0
         @params gen_prob (Optional[float], DEFAULT None): The new spin 
-            generation probability in the neighbor generation model. 
+            generation probability in the neighbor generation model. If it is 
+            greater than 1, then the spin generation probability is assumed to 
+            be 1. 
             CONSTRAINT: gen_prob > 0
         @params gen_sigma (Optional[float], DEFAULT None): The mean offset in 
             the neighbor generation algorithm in the neighbor generation 
@@ -79,7 +81,9 @@ class Spin_Model(physics_model.Physics_Model):
         # mask = torch.tensor(mask, device=device, dtype=torch.bool)
         mask = torch.rand(*n.shape[:-1], device=self.device) < self.gen_prob
         mask = mask.unsqueeze(-1)
-        mask = mask.repeat(*np.ones(n.dim()-1, dtype=int), n.shape[-1])
+        # mask = mask.repeat(*np.ones(n.dim()-1, dtype=int), n.shape[-1])
         n = n + torch.randn(n.shape, device=device, dtype=torch.double) \
             * self.gen_sigma * mask
         return torch.nn.functional.normalize(n, dim=-1)
+
+

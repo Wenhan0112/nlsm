@@ -11,7 +11,6 @@ device = torch.device("cuda") if torch.cuda.is_available() else cpu
 class Slicer():
     def __init__(self):
         self.slice = []
-        self.dict = []
         self.labels = {}
     
     def add_slice(self, l):
@@ -23,9 +22,7 @@ class Slicer():
         self.labels[label].append(len(self.slice))
         self.slice.append(None)
     
-    def get_labels(self, if_print=False):
-        if if_print:
-            print(self.labels)
+    def get_labels(self):
         return self.labels
 
     def get_idx(self, idx_dict):
@@ -139,14 +136,14 @@ class Correlator(Base_Correlator):
                 str1 += ALPHABET_U[i]
                 str2 += ALPHABET_U[i]
                 self.new_shape.append(shape[i])
-                self.slicer["t"].add_element("tp")
+                self.slicer["t"].add_slice(self.shape[i])
                 self.slicer["result"].add_element("tp")
                 self.single_count.append([shape[i]])
             elif i in self.axis["r"]:
                 str1 += ALPHABET_U[i]
                 str2 += ALPHABET_U[i]
                 self.new_shape.append(self.shape[i] // 2 + 1)
-                self.slicer["t"].add_element()
+                self.slicer["t"].add_slice(self.shape[i])
                 self.slicer["result"].add_element("r")
                 single_count_slice = np.full(self.shape[i] // 2 + 1, 2)
                 single_count_slice[0] = 1
@@ -286,13 +283,8 @@ def neg_to_pos_index(dim, axis):
     axis = np.array(axis)
     return np.where(axis >= 0, axis, axis + dim)
 
-
-
 def dict_product(dicts):
     return (dict(zip(dicts.keys(), x)) for x in itertools.product(*dicts.values()))
-
-
-
 
 
 if __name__ == "__main__":

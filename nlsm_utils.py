@@ -1,11 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 import torch
 import pickle
 from typing import Optional
 import tqdm
 from utils import WeightedLinearRegressor
 import os
+import shutil
 
 """
 Visualization Utils
@@ -19,25 +21,26 @@ def plot_hamiltonian(data: np.ndarray, title: str = "",
         Constraints: data.ndim in [1, 2]
     """
     data = convert_array(data)
+    fig, ax = plt.subplots()
     if data.ndim == 1:
-        plt.plot(data)
+        ax.plot(data)
     elif data.ndim == 2:
         for i in range(data.shape[0]):
-            plt.plot(data[i])
+            ax.plot(data[i])
     else:
         raise ValueError
-    plt.xlabel("Iteration")
-    plt.ylabel("Hamiltonian")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Hamiltonian")
     if title:
-        plt.title(title)
+        ax.set_title(title)
     if scale:
-        plt.yscale(scale)
-        plt.ylabel("Hamiltonian Difference")
-    plt.tick_params(direction="in")
+        ax.set_yscale(scale)
+        ax.set_ylabel("Hamiltonian Difference")
+    ax.tick_params(direction="in")
     if save_fig:
-        plt.savefig(save_fig)
-    plt.show()
-    plt.close()
+        fig.savefig(save_fig)
+    fig.show()
+    plt.close(fig)
 
 def plot_hist_hamiltonian(data, title: str = "", save_fig="", vline=None):
     """
@@ -59,6 +62,7 @@ def plot_hist_hamiltonian(data, title: str = "", save_fig="", vline=None):
     plt.close()
 
 def visualize_state(n: np.ndarray):
+    raise NotImplementedError("This method is not implemented!")
     assert n.shape[-1] == 3, \
         f"Incorrect shape of visualization state {n.shape}!"
     if n.ndim == 1:
@@ -108,7 +112,7 @@ def energy_temperature_dependence(temperature, energy, fit=False, log=False):
     plt.show()
     plt.close()
 
-def create_animation_state(data, step=1, show_bar=False):
+def create_animation_state(data, step=1, show_bar=False, save_figs=None):
     assert data.ndim == 5 and data.shape[1] == 2 and data.shape[4] == 3
     data = data.detach().cpu().numpy()
     fig, (ax0, ax1) = plt.subplots(ncols=2)
@@ -120,6 +124,11 @@ def create_animation_state(data, step=1, show_bar=False):
     if show_bar:
         iterator = tqdm.trange(num_frame)
 
+    if save_figs:
+        if os.path.exists(save_figs):
+            shutil.rmtree(save_figs)
+        os.makedirs(save_figs)
+
     def animate(i):
         i = i * step
         if show_bar:
@@ -130,6 +139,10 @@ def create_animation_state(data, step=1, show_bar=False):
         ax1.set_title(f"Step {i} Layer 1")
         im0 = ax0.imshow(data[i, 0])
         im1 = ax1.imshow(data[i, 1])
+        if save_figs:
+            fig.savefig(
+                os.path.join(save_figs, "step_{i}.png")
+            )
         return im0, im1
 
     animation = matplotlib.animation.FuncAnimation(
@@ -180,7 +193,7 @@ def load_data(file_name):
 def dump_data(data, file_name):
     pickle.dump(data, open(file_name, "wb"))
 
-def export_data(data_dict, keys=None, omit_keys=None):
+def export_data(data_dict, keys=None, omit_keys=[]):
     result = {}
     if not keys:
         keys = data_dict.keys()

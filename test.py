@@ -6,6 +6,9 @@ import time
 import torchgeometry
 import physical_fn as pypf
 import utils
+import two_level_model
+import spin_field_model
+import canonical_ens_sim
 
 cpu = torch.device("cpu")
 device = torch.device("cuda") if torch.cuda.is_available() else cpu
@@ -421,6 +424,31 @@ def test_regressor():
     slope = regressor.get_slope()
     print("Slope", slope)
 
+
+def test_canonical_ensemble_sim():
+    temp = np.logspace(-2, 2, 5)
+    result = np.empty_like(temp)
+    batch_size = 3
+    num_steps = 10000
+    for i in range(len(temp)):
+        model = spin_field_model.Spin_Field_Model(
+            torch.tensor([1, 0, 0], dtype=float), batch_size=batch_size,
+            gen_prob=0.5, gen_sigma=0.1)
+        model.initialize()
+        canonical_ens_simulator = canonical_ens_sim.Canonical_Ensemble_Simulator(model, 1/temp[i])
+        canonical_ens_simulator.initialize()
+        hamiltonian = torch.empty((batch_size, num_steps+1))
+        hamiltonian[:, 0] = canonical_ens_simulator.hamiltonian
+        for j in range(num_steps):
+            canonical_ens_simulator.step()
+            hamiltonian[:, j+1] = canonical_ens_simulator.hamiltonian
+        result[i] = hamiltonian.mean().item()
+    plt.plot(temp,result, "r.")
+    temp = np.logspace(-2, 2, 100)
+    plt.plot(temp, temp - 1 / np.tanh(1/temp), "b-")
+    plt.show()
+
+
 if __name__ == "__main__":
     # test_neighbor_generation_1()
     # test_neighbor_generation_2()
@@ -439,5 +467,6 @@ if __name__ == "__main__":
     # test_tanhc_var1()
     # test_grad()
     # test_grad_algorithm()
-    test_hamiltonian_speed()
+    # test_hamiltonian_speed()
     # test_regressor()
+    test_canonical_ensemble_sim()
